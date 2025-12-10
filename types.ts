@@ -2,7 +2,7 @@ export enum AppStatus {
   IDLE = 'IDLE',
   THINKING = 'THINKING',
   GENERATING = 'GENERATING',
-  SLICING = 'SLICING', // Added slicing state
+  SLICING = 'SLICING',
   SUCCESS = 'SUCCESS',
   ERROR = 'ERROR',
   DEBUG = 'DEBUG'
@@ -14,6 +14,8 @@ export interface SpriteGenerationResult {
 }
 
 export type SpriteStyle = 'NEO_RETRO' | 'PIXEL_ART' | 'FLAT_VECTOR' | 'SKETCH';
+
+export type SpriteDirection = 'FRONT' | 'SIDE' | 'SIDE_LEFT' | 'BACK' | 'ISO_FRONT' | 'ISO_BACK' | 'THREE_QUARTER';
 
 export interface ActionPreset {
   id: string;

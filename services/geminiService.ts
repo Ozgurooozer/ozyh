@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { SpriteStyle } from "../types";
+import { SpriteStyle, SpriteDirection } from "../types";
 
 // Helper to convert file to base64
 export const fileToGenerativePart = async (file: File): Promise<string> => {
@@ -25,7 +25,7 @@ const getClient = () => {
 };
 
 const getStylePrompt = (style: SpriteStyle): string => {
-  const common = "PURE WHITE BACKGROUND. No shadows, no gradients on background.";
+  const common = "PURE WHITE BACKGROUND. No shadows, no gradients on background. UNIFORM LIGHTING from Top-Left.";
   switch (style) {
     case 'PIXEL_ART':
       return `Pixel art style, precise pixel grid, limited color palette, retro 16-bit aesthetic, sharp hard edges, no anti-aliasing. ${common}`;
@@ -47,6 +47,7 @@ export const generateSpriteSheet = async (
   mimeType: string,
   actionLogic: string,
   style: SpriteStyle,
+  direction: SpriteDirection,
   customPositive: string,
   customNegative: string,
   poseBase64?: string
@@ -60,34 +61,50 @@ export const generateSpriteSheet = async (
 
   if (poseBase64) {
     fullPrompt = `
-    ROLE: You are a Senior Technical Artist at a top-tier 2D game studio.
-    TASK: Transfer the Character from IMAGE 1 onto the Geometry of IMAGE 2.
-    
-    [INPUTS PROVIDED]
-    IMAGE 1: THE CHARACTER STYLE SOURCE (The "Paint").
-    IMAGE 2: THE STRUCTURAL POSE GUIDE (The "Canvas").
-
     [CRITICAL - IDENTITY PRESERVATION]
     1. SOURCE OF TRUTH: Image 1 is the absolute reference.
     2. NO HALLUCINATIONS: If Image 1 is a bald mannequin, the output MUST be a bald mannequin. DO NOT add hair, eyes, nose, or mouth if they are missing in the source.
     3. NO BEAUTIFICATION: Do not 'improve' the character design or add clothing details not present in Image 1.
     4. EXACT MATCH: Keep the exact clothes, colors, and skin texture of Image 1.
 
+    ROLE: You are a Lead Technical Animator & Character Artist.
+    TASK: Retarget the character design from IMAGE 1 onto the Volumetric Guide in IMAGE 2.
+    
+    [INPUTS PROVIDED]
+    IMAGE 1: CHARACTER REFERENCE (Style, Colors, Costume).
+    IMAGE 2: VOLUMETRIC POSE GUIDE (Geometry, Depth, Anatomy).
+
+    [GUIDE INTERPRETATION RULES - CRITICAL]
+    1. DEPTH CODING: Image 2 uses grayscale depth coding. 
+       - BLACK/DARK GREY capsules are FOREGROUND limbs (Left side usually).
+       - LIGHT GREY capsules are BACKGROUND limbs (Right side usually).
+       - SOLID DOTS are JOINTS (Shoulders, Elbows, Knees).
+       - Draw the character's limbs respecting this depth order.
+    2. VOLUMETRIC CAPSULES: The thick lines in Image 2 represent the ACTUAL THICKNESS/VOLUME of the character. Fill this volume exactly. RASTERIZE THE CAPSULES.
+    3. CAMERA ANGLE: The guide is set to ${direction} view. Adjust facial features (using the face vector line on the head) and clothing perspective to match ${direction}.
+    4. LEFT/RIGHT PROFILE: If the direction is SIDE_LEFT, the character MUST face LEFT. If SIDE, the character MUST face RIGHT.
+
+    [CRITICAL - PHYSICS & CONSISTENCY]
+    1. GROUND LOCK: The character's feet must align perfectly with the horizontal floor lines in Image 2.
+    2. VOLUME LOCK: The character's silhouette must fit exactly inside the guide shapes.
+    3. LIGHTING CONSISTENCY: Use a global light source from the TOP-LEFT. Shadows must be consistent across all 6 frames.
+    
     [CRITICAL - ANIMATION LOOP]
     1. SEAMLESS LOOP: Frame 6 must visually transition back to Frame 1. 
-    2. CYCLICAL FLOW: Ensure the motion is continuous (e.g., for running: Contact -> Recoil -> Passing -> High Point -> Contact).
+    2. CYCLICAL FLOW: Ensure the motion is continuous.
 
     [RULES]
-    1. Match the exact limb positions of Image 2 (The Pose Guide).
+    1. Match the exact limb positions of Image 2.
     2. Do not change the composition or grid layout of Image 2.
     3. STRICT 6-COLUMN GRID: The output must match the 6-column layout of the pose guide exactly.
     `;
   } else {
-    // Fallback logic if no pose guide is present (Standard generation)
+    // Fallback logic
     fullPrompt = `
     ROLE: You are a Senior Technical Artist.
     TASK: Create a professional 6-frame sprite sheet.
     CONTEXT: The character is a FICTIONAL GAME ASSET.
+    DIRECTION: ${direction} View.
     
     [INPUTS]
     IMAGE 1: REFERENCE CHARACTER.
@@ -95,10 +112,14 @@ export const generateSpriteSheet = async (
     [ANIMATION LOGIC]
     ${actionLogic}
 
+    [CRITICAL - CONSISTENCY]
+    1. VOLUME LOCK: The character's size (head-to-toe height and width) MUST be identical in every frame. Do not zoom in or out.
+    2. GROUND CONTACT: For Idle/Walk/Attack, the feet must align with the same Y-axis baseline. No floating.
+    3. LIGHTING: Consistent Top-Left lighting.
+
     [CRITICAL - LAYOUT]
     1. STRICT 6-COLUMN GRID: The output image must be composed of exactly 6 equal vertical columns.
     2. SPACING: Center the character perfectly in each of the 6 columns.
-    3. NO OVERLAP: Characters must NOT touch the edges of their imaginary columns.
     `;
   }
 
@@ -183,6 +204,125 @@ export const generateSpriteSheet = async (
     throw error;
   }
 };
+
+/**
+ * Generates dynamic intermediate frames (Tweening) with flexible counts (4, 3, 2, 1).
+ */
+export const generateDynamicInBetweens = async (sourceImageBase64: string, targetCount: number): Promise<string> => {
+  const ai = getClient();
+  
+  const prompt = `
+    ROLE: Expert 2D Animator (Tweening Specialist).
+    TASK: Generate exactly ${targetCount} NEW intermediate frames (In-betweens) derived from the provided sprite sheet.
+
+    [INPUT CONTEXT]
+    The provided image contains a sequence of animation keyframes.
+    Your job is to analyze the motion between these frames and generate the "Missing Links" or "Breakdowns" that would fit BETWEEN the existing poses.
+
+    [OUTPUT REQUIREMENTS]
+    1. IMAGE LAYOUT: Create a single horizontal strip with exactly ${targetCount} equal columns.
+    2. CONTENT MAPPING:
+       - You must generate ${targetCount} frames that represent the mathematical blending of the input poses.
+       - If input has N frames, imagine the ${targetCount} frames are evenly distributed in the gaps.
+
+    [STRICT CONSISTENCY RULES]
+    1. EXACT CHARACTER MATCH: Use the exact same colors, outline thickness, and shading style as the input.
+    2. ALIGNMENT: The feet must be on the exact same ground line as the input.
+    3. VOLUME: Do not shrink or grow the character. The pixel mass must be identical.
+    4. BACKGROUND: Pure white background.
+
+    Output ONLY the ${targetCount} new frames in a single image strip.
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+            parts: [
+                { text: prompt },
+                { inlineData: { mimeType: 'image/png', data: sourceImageBase64 } }
+            ]
+        },
+        config: {
+            imageConfig: {
+                aspectRatio: "16:9" 
+            }
+        }
+    });
+
+    for (const candidate of response.candidates || []) {
+        for (const part of candidate.content.parts) {
+            if (part.inlineData && part.inlineData.data) {
+                return `data:image/png;base64,${part.inlineData.data}`;
+            }
+        }
+    }
+    throw new Error("Failed to generate in-between frames.");
+
+  } catch (error) {
+    console.error("Tweening error:", error);
+    throw error;
+  }
+};
+
+/**
+ * Generates transition frames between the current image and a target action.
+ */
+export const generateActionBridge = async (sourceImageBase64: string, targetActionDescription: string): Promise<string> => {
+    const ai = getClient();
+    
+    const prompt = `
+      ROLE: Lead Game Animator.
+      TASK: Generate a 5-frame TRANSITION SEQUENCE (Bridge) that morphs the character from the provided input pose into a NEW action.
+  
+      [INPUT]
+      IMAGE: The starting pose/style of the character.
+      TARGET ACTION: ${targetActionDescription}
+  
+      [OUTPUT LOGIC - 5 FRAMES]
+      Frame 1: Identical to the LAST frame of the input image (Continuity).
+      Frame 2: Slight movement towards the target action (Anticipation).
+      Frame 3: Mid-point blend (Morphing).
+      Frame 4: Approaching the target action.
+      Frame 5: The FIRST frame of the target action (${targetActionDescription}).
+  
+      [STRICT CONSISTENCY]
+      1. STYLE LOCK: You MUST use the exact design, colors, and proportions of the input image.
+      2. SMOOTHNESS: The change must be linear and fluid.
+      3. LAYOUT: Output exactly 5 equal vertical columns.
+      4. BACKGROUND: Pure white.
+    `;
+  
+    try {
+      const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash-image',
+          contents: {
+              parts: [
+                  { text: prompt },
+                  { inlineData: { mimeType: 'image/png', data: sourceImageBase64 } }
+              ]
+          },
+          config: {
+              imageConfig: {
+                  aspectRatio: "16:9" 
+              }
+          }
+      });
+  
+      for (const candidate of response.candidates || []) {
+          for (const part of candidate.content.parts) {
+              if (part.inlineData && part.inlineData.data) {
+                  return `data:image/png;base64,${part.inlineData.data}`;
+              }
+          }
+      }
+      throw new Error("Failed to generate transition bridge.");
+  
+    } catch (error) {
+      console.error("Bridge generation error:", error);
+      throw error;
+    }
+  };
 
 /**
  * Uses Gemini 3 Pro Reasoning to refine prompts

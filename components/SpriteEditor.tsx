@@ -5,23 +5,29 @@ import {
   Move, ArrowUpCircle, AlertTriangle, Swords, Shield, 
   Ghost, Trophy, Crosshair, Hand, Pause, Play, Scissors,
   Check, ChevronRight, Maximize2, Monitor, Trash2, Terminal,
-  Eye, EyeOff, TestTube
+  Eye, EyeOff, TestTube, Compass, ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
+  Film, Split, Layers, GitBranch, ArrowDownRight, ArrowRightCircle
 } from 'lucide-react';
-import { fileToGenerativePart, generateSpriteSheet, refinePromptWithReasoning } from '../services/geminiService';
-import { AppStatus, ActionPreset, SpriteStyle, FrameData } from '../types';
-import { POSE_TEMPLATES } from '../assets/poses';
+import { fileToGenerativePart, generateSpriteSheet, refinePromptWithReasoning, generateDynamicInBetweens, generateActionBridge } from '../services/geminiService';
+import { AppStatus, ActionPreset, SpriteStyle, FrameData, SpriteDirection } from '../types';
 
 // --- DATA CONSTANTS ---
 
+export type CharacterArchetype = 'VANGUARD' | 'ROGUE' | 'MYSTIC' | 'BEAST';
+
 const ACTION_PRESETS: ActionPreset[] = [
   { id: 'IDLE_BREATHE', label: 'Idle', description: 'Breathing Loop', promptLogic: 'Action: BREATHING LOOP (Sine Wave). Frame 1: Neutral. Frame 2: Inhale Start. Frame 3: Inhale Mid. Frame 4: MAX INHALE. Frame 5: Exhale Start. Frame 6: Exhale End.', poseId: 'IDLE_BREATHE' },
-  { id: 'WALK_CYCLE', label: 'Walk', description: 'Side Scroll', promptLogic: 'Action: WALK CYCLE (Side View). Frame 1: Contact. Frame 2: Recoil. Frame 3: Passing. Frame 4: High Point. Frame 5: Contact. Frame 6: Recovery.', poseId: 'WALK_CYCLE' },
+  { id: 'WALK_CYCLE', label: 'Walk', description: 'Standard Walk', promptLogic: 'Action: WALK CYCLE. Frame 1: Contact. Frame 2: Recoil. Frame 3: Passing. Frame 4: High Point. Frame 5: Contact. Frame 6: Recovery.', poseId: 'WALK_CYCLE' },
+  { id: 'WALK_START_STOP', label: 'Walk Start/Stop', description: 'Transition', promptLogic: 'Action: WALK TRANSITION. Frame 1: Idle. Frame 2: Lean Forward. Frame 3: First Step. Frame 4: Walk Loop. Frame 5: Decelerate. Frame 6: Idle.' },
   { id: 'RUN_CYCLE', label: 'Run', description: 'Fast Sprint', promptLogic: 'Action: RUN CYCLE. Forward lean 45°. Arms pumping. Legs full extension. Dynamic motion lines.', poseId: 'RUN_SIDE' },
+  { id: 'RUN_START_STOP', label: 'Run Start/Stop', description: 'Transition', promptLogic: 'Action: RUN TRANSITION. Frame 1: Idle. Frame 2: Deep Lean. Frame 3: Explosive Start. Frame 4: Sprint. Frame 5:Skid Stop. Frame 6: Idle.' },
   { id: 'JUMP_FULL', label: 'Jump', description: 'Launch/Land', promptLogic: 'Action: JUMP ARC. Frame 1: Squash. Frame 2: Launch. Frame 3: Rise. Frame 4: Apex. Frame 5: Fall. Frame 6: Land.', poseId: 'JUMP_FULL' },
   { id: 'ATTACK_MELEE', label: 'Attack', description: 'Combo Hit', promptLogic: 'Action: MELEE ATTACK. Frame 1: Windup. Frame 2: Step. Frame 3: IMPACT. Frame 4: Follow-thru. Frame 5: Retract. Frame 6: Idle.', poseId: 'ATTACK_MELEE' },
   { id: 'GUARD_BLOCK', label: 'Guard', description: 'Defense', promptLogic: 'Action: GUARD. Frame 1-6: Steady defensive stance. Knees bent. Arms shielding face. Minimal movement.' },
   { id: 'HIT_REACTION', label: 'Hit', description: 'Damage', promptLogic: 'Action: TAKE DAMAGE. Frame 1: Impact. Frame 2: Crunch. Frame 3: Stumble. Frame 4: Slide. Frame 5: Recover. Frame 6: Idle.' },
   { id: 'DASH_SLIDE', label: 'Dash', description: 'Evasion', promptLogic: 'Action: DASH. Low profile slide. Speed lines. Horizontal stretch. One leg lead.' },
+  { id: 'STRAFE_LEFT', label: 'Strafe L', description: 'Sidestep', promptLogic: 'Action: STRAFE LEFT. Lateral movement. Legs crossing over. Upper body facing forward. Weapon ready.' },
+  { id: 'STRAFE_RIGHT', label: 'Strafe R', description: 'Sidestep', promptLogic: 'Action: STRAFE RIGHT. Lateral movement. Legs crossing over. Upper body facing forward. Weapon ready.' },
   { id: 'CLIMB_LADDER', label: 'Climb', description: 'Vertical', promptLogic: 'Action: LADDER CLIMB. Back view. Frame 1: R-Hand Up. Frame 2: R-Leg Up. Frame 3: Pull. Frame 4: L-Hand Up. Frame 5: L-Leg Up. Frame 6: Pull.' },
   { id: 'CAST_SPELL', label: 'Magic', description: 'Channeling', promptLogic: 'Action: MAGIC CAST. Frame 1: Gather. Frame 2: Charge. Frame 3: RELEASE. Frame 4: Projectile. Frame 5: Recoil. Frame 6: Cool.' },
   { id: 'VICTORY_POSE', label: 'Win', description: 'Celebration', promptLogic: 'Action: VICTORY. Frame 1: Shock. Frame 2: Fist Pump. Frame 3: Jump. Frame 4: Pose High. Frame 5: Hold. Frame 6: Land.' },
@@ -33,6 +39,23 @@ const STYLE_OPTIONS: {id: SpriteStyle, label: string}[] = [
   { id: 'PIXEL_ART', label: 'PIXEL' },
   { id: 'FLAT_VECTOR', label: 'VECTOR' },
   { id: 'SKETCH', label: 'INK' },
+];
+
+const DIRECTION_OPTIONS: {id: SpriteDirection, label: string, icon: React.ReactNode}[] = [
+  { id: 'FRONT', label: 'FRONT', icon: <ArrowDown size={10}/> },
+  { id: 'THREE_QUARTER', label: '3/4', icon: <Compass size={10}/> },
+  { id: 'SIDE', label: 'SIDE R', icon: <ArrowRight size={10}/> },
+  { id: 'SIDE_LEFT', label: 'SIDE L', icon: <ArrowLeft size={10}/> },
+  { id: 'BACK', label: 'BACK', icon: <ArrowUp size={10}/> },
+  { id: 'ISO_FRONT', label: 'ISO F', icon: <ChevronRight size={10} className="rotate-45"/> },
+  { id: 'ISO_BACK', label: 'ISO B', icon: <ChevronRight size={10} className="-rotate-45"/> },
+];
+
+const ARCHETYPE_OPTIONS: {id: CharacterArchetype, label: string}[] = [
+    { id: 'VANGUARD', label: 'Vanguard (Heavy)' },
+    { id: 'ROGUE', label: 'Rogue (Stealth)' },
+    { id: 'MYSTIC', label: 'Mystic (Float)' },
+    { id: 'BEAST', label: 'Beast (Hunch)' },
 ];
 
 // Enhanced negative prompt for anatomy AND identity hallucinations
@@ -47,10 +70,17 @@ const SpriteEditor: React.FC = () => {
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [frames, setFrames] = useState<FrameData[]>([]);
   
+  // Enhancement States
+  const [enhancementChain, setEnhancementChain] = useState<{count: number, url: string}[]>([]);
+  const [transitionAction, setTransitionAction] = useState<ActionPreset>(ACTION_PRESETS[1]);
+  const [transitionResult, setTransitionResult] = useState<string | null>(null);
+
   const [selectedAction, setSelectedAction] = useState<ActionPreset>(ACTION_PRESETS[0]);
   const [selectedStyle, setSelectedStyle] = useState<SpriteStyle>('NEO_RETRO');
+  const [selectedDirection, setSelectedDirection] = useState<SpriteDirection>('SIDE');
+  const [selectedArchetype, setSelectedArchetype] = useState<CharacterArchetype>('VANGUARD');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [viewMode, setViewMode] = useState<'SHEET' | 'PLAYER' | 'INSPECTOR'>('SHEET');
+  const [viewMode, setViewMode] = useState<'SHEET' | 'PLAYER' | 'INSPECTOR' | 'ENHANCE'>('SHEET');
   
   const [customPositive, setCustomPositive] = useState("");
   const [customNegative, setCustomNegative] = useState(DEFAULT_NEGATIVE);
@@ -75,6 +105,8 @@ const SpriteEditor: React.FC = () => {
     setSelectedFile(null);
     setPreviewUrl(null);
     setGeneratedImage(null);
+    setEnhancementChain([]);
+    setTransitionResult(null);
     setFrames([]);
     setStatus(AppStatus.IDLE);
     setError(null);
@@ -89,6 +121,8 @@ const SpriteEditor: React.FC = () => {
       const objectUrl = URL.createObjectURL(file);
       setPreviewUrl(objectUrl);
       setGeneratedImage(null);
+      setEnhancementChain([]);
+      setTransitionResult(null);
       setFrames([]);
       setViewMode('SHEET');
     }
@@ -137,35 +171,264 @@ const SpriteEditor: React.FC = () => {
     }
   }, []);
 
+  // --- VOLUMETRIC CAPSULE GENERATOR (THE 10-EXPERT UPGRADE) ---
+  const generateProceduralPose = (actionId: string, direction: SpriteDirection, archetype: CharacterArchetype): string => {
+    const width = 1920;
+    const height = 1080;
+    const cols = 6;
+    const colWidth = width / cols;
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) return '';
+    
+    // Fill background with white (AI expects clean background)
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, width, height);
+
+    const drawCapsule = (x1: number, y1: number, x2: number, y2: number, radius: number, color: string) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = radius * 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+    };
+
+    const drawJoint = (x: number, y: number, radius: number, color: string) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    
+    // Draw guides
+    for (let i = 0; i < cols; i++) {
+        const cx = i * colWidth + (colWidth / 2); // Center X of column
+        const floorY = height * 0.85; // Ground line
+        const headSize = 55;
+        const totalHeight = height * 0.55;
+        const hipY = floorY - (totalHeight * 0.5);
+        const shoulderY = floorY - (totalHeight * 0.85);
+        const headY = floorY - totalHeight;
+
+        // Colors for Depth Coding (Black = Front, Grey = Back)
+        const frontColor = '#000000';
+        const backColor = '#888888';
+
+        // Settings for different actions/directions
+        let yOffset = 0;
+        let legL_X = -30, legL_Y = floorY;
+        let legR_X = 30, legR_Y = floorY;
+        let armL_X = -50, armL_Y = shoulderY + 100;
+        let armR_X = 50, armR_Y = shoulderY + 100;
+        let lean = 0;
+        
+        // --- ARCHETYPE MODIFIERS ---
+        let legSpread = 1.0;
+        let crouchOffset = 0;
+        let armLift = 0;
+        let spineCurve = 0;
+
+        switch (archetype) {
+            case 'VANGUARD':
+                legSpread = 1.5; // Wide stance
+                break;
+            case 'ROGUE':
+                crouchOffset = 20; // Lower center of gravity
+                lean = direction.includes('SIDE') ? 0.2 : 0;
+                break;
+            case 'MYSTIC':
+                armLift = -30; // Hands slightly raised
+                break;
+            case 'BEAST':
+                spineCurve = 15; // Hunch
+                armLift = 40; // Long arms
+                break;
+        }
+
+        // --- MATHEMATICAL POSING LOGIC ---
+        const phase = (i / 6) * Math.PI * 2;
+
+        // 1. DIRECTION LOGIC OVERRIDES
+        let xMod = 1; // Modifier for side view (wide) vs front view (narrow)
+        if (direction === 'FRONT' || direction === 'BACK') xMod = 0.4;
+        if (direction === 'THREE_QUARTER' || direction.includes('ISO')) xMod = 0.7;
+
+        // 2. ACTION LOGIC
+        if (actionId.includes('WALK')) {
+            // Physics: Head bob is lowest at contact (sin 0 & pi), highest at passing (pi/2 & 3pi/2)
+            yOffset = (Math.abs(Math.cos(phase * 2)) * -15) + crouchOffset; 
+            
+            // Legs (Sin wave scissors)
+            legL_X = Math.sin(phase) * 60 * xMod * legSpread;
+            legR_X = Math.sin(phase + Math.PI) * 60 * xMod * legSpread;
+            // Knee lift
+            const liftL = Math.max(0, Math.sin(phase)) * 40;
+            const liftR = Math.max(0, Math.sin(phase + Math.PI)) * 40;
+            legL_Y = floorY - (direction.includes('SIDE') ? 0 : liftL);
+            legR_Y = floorY - (direction.includes('SIDE') ? 0 : liftR);
+
+        } else if (actionId.includes('RUN')) {
+            yOffset = (Math.abs(Math.sin(phase)) * 30) + crouchOffset; // Bouncing
+            lean += direction.includes('SIDE') ? 0.3 : 0;
+            legL_X = Math.sin(phase) * 100 * xMod * legSpread;
+            legR_X = Math.sin(phase + Math.PI) * 100 * xMod * legSpread;
+            legL_Y = floorY - (Math.sin(phase) > 0 ? 0 : 40);
+            legR_Y = floorY - (Math.sin(phase + Math.PI) > 0 ? 0 : 40);
+            
+            if (actionId === 'RUN_START_STOP') {
+                // Procedural acceleration: Frame 1-2 Lean fwd, Frame 3-4 Run, Frame 5-6 Lean back
+                if (i < 2) lean = 0.5;
+                else if (i > 4) lean = -0.2;
+            }
+
+        } else if (actionId.includes('IDLE')) {
+            yOffset = (Math.sin(phase) * 5) + crouchOffset; // Breathing
+            // Contrapposto (Shift hip slightly left/right)
+            const hipShift = Math.sin(phase) * 5;
+            legL_X += hipShift;
+            legR_X += hipShift;
+        } else if (actionId.includes('STRAFE')) {
+            // Lateral movement logic
+            legL_X = Math.cos(phase) * 40;
+            legR_X = Math.sin(phase) * 40;
+        }
+
+        ctx.save();
+        ctx.translate(cx, yOffset);
+        ctx.rotate(lean);
+
+        // --- DRAWING THE VOLUMETRIC SKELETON (Back to Front) ---
+
+        // 1. Back Leg (Right) - Grey
+        drawCapsule(0 + spineCurve, hipY, legR_X, legR_Y, 18, backColor);
+        drawJoint(legR_X, legR_Y, 8, backColor); // Knee/Foot
+
+        // 2. Back Arm (Right) - Grey
+        drawCapsule(0 + spineCurve, shoulderY, armR_X, armR_Y + armLift, 15, backColor);
+        drawJoint(armR_X, armR_Y + armLift, 6, backColor); // Elbow/Hand
+
+        // 3. Torso (Spine) - Black
+        drawCapsule(0, hipY, 0 + spineCurve, shoulderY, 25, frontColor);
+        drawJoint(0, hipY, 20, frontColor); // Hip Joint
+        drawJoint(0 + spineCurve, shoulderY, 20, frontColor); // Shoulder Joint
+
+        // 4. Head - Black
+        ctx.fillStyle = frontColor;
+        ctx.beginPath();
+        ctx.arc(0 + (lean * 40) + spineCurve, headY, headSize, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Face Vector (Nose direction)
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        let noseX = 0 + (lean * 40) + spineCurve;
+        if (direction === 'SIDE') noseX += 30;
+        else if (direction === 'SIDE_LEFT') noseX -= 30; // Mirror for Left View
+        else if (direction === 'THREE_QUARTER') noseX += 20;
+        else if (direction === 'ISO_FRONT') noseX += 25;
+        
+        ctx.moveTo(0 + (lean * 40) + spineCurve, headY);
+        ctx.lineTo(noseX, headY + 10);
+        ctx.stroke();
+
+        // 5. Front Leg (Left) - Black
+        drawCapsule(0 + spineCurve, hipY, legL_X, legL_Y, 18, frontColor);
+        drawJoint(legL_X, legL_Y, 8, frontColor);
+
+        // 6. Front Arm (Left) - Black
+        // Smear Frame logic: If attacking and frame 3, stretch the arm
+        let smearMod = 0;
+        if (actionId.includes('ATTACK') && i === 2) smearMod = 40; 
+        
+        drawCapsule(0 + spineCurve, shoulderY, armL_X, armL_Y + armLift + smearMod, 15, frontColor);
+        drawJoint(armL_X, armL_Y + armLift + smearMod, 6, frontColor);
+
+        ctx.restore();
+
+        // Draw Ground Line Guide (To force grounding)
+        ctx.strokeStyle = '#DDDDDD';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(i * colWidth, floorY);
+        ctx.lineTo((i + 1) * colWidth, floorY);
+        ctx.stroke();
+    }
+    
+    return canvas.toDataURL('image/png').split(',')[1];
+  };
+
   const handleGenerate = async () => {
     if (!selectedFile) return;
     setStatus(AppStatus.GENERATING);
     setError(null);
     setFrames([]);
+    setEnhancementChain([]);
+    setTransitionResult(null);
 
     try {
       const base64Data = await fileToGenerativePart(selectedFile);
       
-      // Check for Pose Guide
-      const poseBase64 = selectedAction.poseId ? POSE_TEMPLATES[selectedAction.poseId] : undefined;
+      // GENERATE A DYNAMIC POSE GUIDE ON THE FLY
+      const proceduralPoseBase64 = generateProceduralPose(selectedAction.id, selectedDirection, selectedArchetype);
 
-      // Store prompt for debugging purposes (simulated since logic is in service)
-      setLastPrompt(`Action: ${selectedAction.promptLogic}\nStyle: ${selectedStyle}\nPoseGuide: ${selectedAction.poseId || 'None'}\nRefined: ${customPositive}`);
+      // Store prompt for debugging purposes
+      setLastPrompt(`Action: ${selectedAction.promptLogic}\nStyle: ${selectedStyle}\nDirection: ${selectedDirection}\nArchetype: ${selectedArchetype}\nProceduralPose: VOLUMETRIC CAPSULE GENERATED\nRefined: ${customPositive}`);
 
       const resultUrl = await generateSpriteSheet(
         base64Data, 
         selectedFile.type, 
         selectedAction.promptLogic,
         selectedStyle,
+        selectedDirection,
         customPositive,
         customNegative,
-        poseBase64
+        proceduralPoseBase64
       );
       setGeneratedImage(resultUrl);
       await sliceSpriteSheet(resultUrl);
     } catch (e: any) {
       setError(e.message || "Failed to generate sprite sheet");
       setStatus(AppStatus.ERROR);
+    }
+  };
+
+  const handleRecursiveEnhance = async (sourceUrl: string, targetCount: number) => {
+    setStatus(AppStatus.GENERATING);
+    setError(null);
+
+    try {
+      const base64Data = sourceUrl.split(',')[1];
+      const resultUrl = await generateDynamicInBetweens(base64Data, targetCount);
+      
+      // Add to chain
+      setEnhancementChain(prev => [...prev, { count: targetCount, url: resultUrl }]);
+      setStatus(AppStatus.SUCCESS);
+    } catch (e: any) {
+      setError(e.message || "Enhancement failed");
+      setStatus(AppStatus.ERROR);
+    }
+  };
+
+  const handleActionBridge = async () => {
+    if (!generatedImage) return;
+    setStatus(AppStatus.GENERATING);
+    setError(null);
+
+    try {
+        const base64Data = generatedImage.split(',')[1];
+        const bridgeUrl = await generateActionBridge(base64Data, transitionAction.promptLogic);
+        setTransitionResult(bridgeUrl);
+        setStatus(AppStatus.SUCCESS);
+    } catch (e: any) {
+        setError(e.message || "Bridge generation failed");
+        setStatus(AppStatus.ERROR);
     }
   };
 
@@ -301,26 +564,69 @@ const SpriteEditor: React.FC = () => {
             </div>
           </section>
 
-          {/* 2. Style Selector */}
-          <section>
-             <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block">Render Style</label>
-             <div className="grid grid-cols-4 gap-1 p-1 bg-[#151515] rounded border border-white/5">
-                {STYLE_OPTIONS.map((style) => (
-                  <button
-                    key={style.id}
-                    onClick={() => setSelectedStyle(style.id)}
-                    className={`
-                      py-1.5 text-[9px] font-bold rounded transition-all
-                      ${selectedStyle === style.id 
-                        ? 'bg-indigo-600 text-white shadow-sm' 
-                        : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}
-                    `}
-                  >
-                    {style.label}
-                  </button>
-                ))}
-             </div>
-          </section>
+          {/* 2. Direction & Style & Archetype */}
+          <div className="grid grid-cols-1 gap-6">
+            <section>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block">Camera Angle</label>
+                <div className="grid grid-cols-3 gap-1 p-1 bg-[#151515] rounded border border-white/5">
+                    {DIRECTION_OPTIONS.map((dir) => (
+                    <button
+                        key={dir.id}
+                        onClick={() => setSelectedDirection(dir.id)}
+                        className={`
+                        py-1.5 text-[9px] font-bold rounded transition-all flex flex-col items-center gap-1
+                        ${selectedDirection === dir.id 
+                            ? 'bg-indigo-600 text-white shadow-sm' 
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}
+                        `}
+                    >
+                        {dir.icon}
+                        {dir.label}
+                    </button>
+                    ))}
+                </div>
+            </section>
+
+             <section>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block">Class Archetype</label>
+                <div className="grid grid-cols-2 gap-1 p-1 bg-[#151515] rounded border border-white/5">
+                    {ARCHETYPE_OPTIONS.map((arch) => (
+                    <button
+                        key={arch.id}
+                        onClick={() => setSelectedArchetype(arch.id)}
+                        className={`
+                        py-1.5 text-[9px] font-bold rounded transition-all flex items-center justify-center gap-1
+                        ${selectedArchetype === arch.id 
+                            ? 'bg-purple-600 text-white shadow-sm' 
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}
+                        `}
+                    >
+                        {arch.label}
+                    </button>
+                    ))}
+                </div>
+            </section>
+
+            <section>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block">Render Style</label>
+                <div className="grid grid-cols-4 gap-1 p-1 bg-[#151515] rounded border border-white/5">
+                    {STYLE_OPTIONS.map((style) => (
+                    <button
+                        key={style.id}
+                        onClick={() => setSelectedStyle(style.id)}
+                        className={`
+                        py-1.5 text-[9px] font-bold rounded transition-all
+                        ${selectedStyle === style.id 
+                            ? 'bg-indigo-600 text-white shadow-sm' 
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}
+                        `}
+                    >
+                        {style.label}
+                    </button>
+                    ))}
+                </div>
+            </section>
+          </div>
 
           {/* 3. Action Grid */}
           <section>
@@ -328,7 +634,7 @@ const SpriteEditor: React.FC = () => {
                 <label className="text-[10px] font-bold text-slate-500 uppercase">Action Library</label>
                 <span className="text-[9px] text-slate-600 bg-white/5 px-1.5 py-0.5 rounded">{ACTION_PRESETS.length} CLIPS</span>
              </div>
-             <div className="grid grid-cols-2 gap-2">
+             <div className="grid grid-cols-2 gap-2 max-h-[160px] overflow-y-auto custom-scrollbar pr-1">
                 {ACTION_PRESETS.map((preset) => (
                   <button
                     key={preset.id}
@@ -413,7 +719,7 @@ const SpriteEditor: React.FC = () => {
                   {lastPrompt && (
                     <div className="mt-4 pt-4 border-t border-white/5">
                        <label className="text-[9px] text-slate-500 uppercase flex items-center gap-1 mb-1"><Terminal size={8}/> Last Generated Configuration</label>
-                       <pre className="text-[8px] text-slate-500 font-mono bg-black/50 p-2 rounded overflow-x-auto">
+                       <pre className="text-[8px] text-slate-500 font-mono bg-black/50 p-2 rounded overflow-x-auto max-h-24 custom-scrollbar">
                          {lastPrompt}
                        </pre>
                     </div>
@@ -480,6 +786,12 @@ const SpriteEditor: React.FC = () => {
            >
              <Maximize2 size={12} /> INSPECT
            </button>
+           <button 
+              onClick={() => setViewMode('ENHANCE')}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[10px] font-bold transition-all ${viewMode === 'ENHANCE' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+           >
+             <Film size={12} /> ENHANCE
+           </button>
            
            <div className="w-px h-4 bg-white/10 mx-1"></div>
            
@@ -501,7 +813,7 @@ const SpriteEditor: React.FC = () => {
         </div>
 
         {/* Viewport Area */}
-        <div className="flex-1 relative overflow-hidden flex items-center justify-center">
+        <div className="flex-1 relative overflow-hidden flex items-center justify-center custom-scrollbar overflow-y-auto">
             
             {/* Dot Grid Background */}
             <div className="absolute inset-0 pointer-events-none opacity-[0.03]" 
@@ -538,6 +850,110 @@ const SpriteEditor: React.FC = () => {
                           <Download size={12} /> EXPORT PNG
                        </button>
                     </div>
+                  )}
+
+                  {viewMode === 'ENHANCE' && (
+                     <div className="flex flex-row gap-8 w-full max-w-[95vw] h-[80vh]">
+                        
+                        {/* LEFT COLUMN: RECURSIVE CASCADE */}
+                        <div className="flex-1 bg-[#1a1a1a]/50 p-6 rounded-lg border border-white/10 flex flex-col gap-4 overflow-y-auto">
+                            <h3 className="text-xs text-indigo-400 font-bold uppercase tracking-widest flex items-center gap-2">
+                                <GitBranch size={14}/> Recursive Refinement Cascade
+                            </h3>
+                            <p className="text-[10px] text-slate-500 mb-4">
+                                Drill down into the timeline by generating sub-frames between gaps.
+                                5 Frames &rarr; 4 &rarr; 3 &rarr; 2 &rarr; 1.
+                            </p>
+
+                            {/* Original */}
+                            <div className="relative border-l-2 border-indigo-500 pl-4 py-2">
+                                <div className="text-[9px] font-bold text-slate-400 mb-1">LEVEL 0 (SOURCE)</div>
+                                <img src={transitionResult || generatedImage} className="h-16 object-contain border border-white/10 rounded bg-black/50" />
+                                
+                                <button 
+                                    onClick={() => handleRecursiveEnhance(transitionResult || generatedImage!, 4)}
+                                    disabled={status === AppStatus.GENERATING}
+                                    className="mt-2 bg-indigo-900/50 hover:bg-indigo-800 text-indigo-200 text-[9px] px-3 py-1.5 rounded flex items-center gap-2 border border-indigo-500/30"
+                                >
+                                    <ArrowDownRight size={10} /> Generate 4 In-Betweens
+                                </button>
+                            </div>
+
+                            {/* The Chain */}
+                            {enhancementChain.map((level, idx) => (
+                                <div key={idx} className="relative border-l-2 border-purple-500 pl-4 py-2 animate-in fade-in slide-in-from-left-4">
+                                    <div className="text-[9px] font-bold text-purple-400 mb-1">LEVEL {idx + 1} ({level.count} FRAMES)</div>
+                                    <img src={level.url} className="h-16 object-contain border border-white/10 rounded bg-black/50" />
+                                    <div className="flex gap-2 mt-2">
+                                        <button 
+                                            onClick={() => downloadImage(level.url, `ORION_CASCADE_LVL${idx+1}.png`)}
+                                            className="text-slate-500 hover:text-white"
+                                        >
+                                            <Download size={12}/>
+                                        </button>
+                                        
+                                        {level.count > 1 && (
+                                            <button 
+                                                onClick={() => handleRecursiveEnhance(level.url, level.count - 1)}
+                                                disabled={status === AppStatus.GENERATING}
+                                                className="bg-purple-900/50 hover:bg-purple-800 text-purple-200 text-[9px] px-3 py-1.5 rounded flex items-center gap-2 border border-purple-500/30"
+                                            >
+                                                <ArrowDownRight size={10} /> Generate {level.count - 1} In-Betweens
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* RIGHT COLUMN: ACTION BRIDGE */}
+                        <div className="w-[300px] bg-[#1a1a1a]/50 p-6 rounded-lg border border-white/10 flex flex-col gap-4">
+                            <h3 className="text-xs text-green-400 font-bold uppercase tracking-widest flex items-center gap-2">
+                                <ArrowRightCircle size={14}/> Transition Bridge
+                            </h3>
+                            <p className="text-[10px] text-slate-500 mb-4">
+                                Create a 5-frame morph sequence connecting the current pose to a new action.
+                            </p>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Target Action</label>
+                                    <select 
+                                        className="w-full bg-black border border-white/10 text-[10px] text-white p-2 rounded"
+                                        onChange={(e) => {
+                                            const act = ACTION_PRESETS.find(a => a.id === e.target.value);
+                                            if (act) setTransitionAction(act);
+                                        }}
+                                        value={transitionAction.id}
+                                    >
+                                        {ACTION_PRESETS.map(a => (
+                                            <option key={a.id} value={a.id}>{a.label}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <button 
+                                    onClick={handleActionBridge}
+                                    disabled={status === AppStatus.GENERATING}
+                                    className="w-full bg-green-700 hover:bg-green-600 text-white font-bold py-2 rounded text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg"
+                                >
+                                    {status === AppStatus.GENERATING ? <RefreshCw className="animate-spin" size={12}/> : <Layers size={12}/>}
+                                    Generate Transition
+                                </button>
+                            </div>
+
+                            {transitionResult && (
+                                <div className="mt-4 p-2 bg-green-900/10 border border-green-500/30 rounded">
+                                    <div className="text-[9px] text-green-400 font-bold mb-2">BRIDGE GENERATED</div>
+                                    <img src={transitionResult} className="w-full h-auto object-contain bg-black/50 rounded" />
+                                    <div className="mt-2 text-[9px] text-slate-500 italic">
+                                        * You can now refine this bridge using the Cascade panel on the left.
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                     </div>
                   )}
 
                   {viewMode === 'PLAYER' && (
